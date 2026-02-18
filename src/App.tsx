@@ -3,7 +3,7 @@ import axios from 'axios';
 import { AuthModal } from './components/AuthModal';
 import { ModelSelector } from './components/ModelSelector';
 import { Chat } from './components/Chat';
-import { type Message } from './types';
+import { type Attachment, type Message } from './types';
 import { Settings, Plus, Trash2 } from 'lucide-react';
 
 type Provider = 'n1n' | 'openrouter';
@@ -14,7 +14,7 @@ function App() {
   const [openRouterApiKey, setOpenRouterApiKey] = useState('');
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [currentModel, setCurrentModel] = useState('qwen-max-3');
+  const [currentModel, setCurrentModel] = useState('deepseek-v3.2');
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [pendingHello, setPendingHello] = useState(false);
@@ -24,7 +24,7 @@ function App() {
   const apiKeyRef = useRef<string>('');
   const n1nApiKeyRef = useRef<string>('');
   const openRouterApiKeyRef = useRef<string>('');
-  const currentModelRef = useRef<string>('qwen-max-3');
+  const currentModelRef = useRef<string>('deepseek-v3.2');
   const messagesRef = useRef<Message[]>([]);
   const initialHelloSentRef = useRef(false);
 
@@ -119,7 +119,7 @@ function App() {
     setMessages([]);
   };
 
-  const defaultModelForProvider = (p: Provider) => (p === 'openrouter' ? 'openai/gpt-4o' : 'qwen-max-3');
+  const defaultModelForProvider = (p: Provider) => (p === 'openrouter' ? 'openai/gpt-4o' : 'deepseek-v3.2');
 
   const switchProvider = (next: Provider) => {
     if (providerRef.current === next) return;
@@ -148,13 +148,52 @@ function App() {
     void handleSendMessage('Привет');
   };
 
-  const handleSendMessage = async (content: string) => {
+  const buildApiUserContent = (text: string, attachments: Attachment[]) => {
+    const images = attachments.filter((a) => a.kind === 'image' && a.dataUrl);
+    const textFiles = attachments.filter((a) => a.kind === 'file' && typeof a.text === 'string' && a.text.length > 0);
+    const otherFiles = attachments.filter((a) => a.kind === 'file' && !(typeof a.text === 'string' && a.text.length > 0));
+
+    let mergedText = text || '';
+    if (textFiles.length > 0) {
+      for (const f of textFiles) {
+        mergedText += `\n\nФайл: ${f.name}\n\n\`\`\`\n${f.text}\n\`\`\``;
+      }
+    }
+    if (otherFiles.length > 0) {
+      mergedText += `\n\nФайлы (без содержимого):\n${otherFiles.map((f) => `- ${f.name}`).join('\n')}`;
+    }
+
+    if (images.length === 0) return mergedText;
+
+    const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+    if (mergedText.trim()) parts.push({ type: 'text', text: mergedText });
+    for (const img of images) {
+      parts.push({ type: 'image_url', image_url: { url: img.dataUrl! } });
+    }
+    return parts;
+  };
+
+  const extractAssistantText = (rawContent: unknown) => {
+    if (typeof rawContent === 'string') return rawContent;
+    if (Array.isArray(rawContent)) {
+      return rawContent
+        .map((p) => {
+          const type = (p as any)?.type;
+          if (type === 'text') return String((p as any)?.text ?? '');
+          return '';
+        })
+        .join('');
+    }
+    return '';
+  };
+
+  const handleSendMessage = async (content: string, attachments: Attachment[] = []) => {
     if (!apiKeyRef.current) {
       setIsAuthOpen(true);
       return;
     }
 
-    const newMessages: Message[] = [...messagesRef.current, { role: 'user', content }];
+    const newMessages: Message[] = [...messagesRef.current, { role: 'user', content, attachments }];
     messagesRef.current = newMessages;
     setMessages(newMessages);
     setIsLoading(true);
@@ -175,16 +214,26 @@ function App() {
         headers['X-Title'] = 'n1n.ai Chat';
       }
 
+      const apiMessages = newMessages.map((m) => {
+        if (m.role === 'user') {
+          return {
+            role: 'user',
+            content: buildApiUserContent(m.content, m.attachments || []),
+          };
+        }
+        return { role: 'assistant', content: m.content };
+      });
+
       const response = await axios.post(endpoint, {
         model: currentModelRef.current,
-        messages: newMessages,
+        messages: apiMessages,
         temperature: 0.7,
       }, { headers });
 
       const rawMessage = response.data?.choices?.[0]?.message;
       const botMessage: Message = {
         role: 'assistant',
-        content: typeof rawMessage?.content === 'string' ? rawMessage.content : '',
+        content: extractAssistantText(rawMessage?.content),
       };
       setMessages((prev) => {
         const next: Message[] = [...prev, botMessage];
@@ -252,11 +301,6 @@ function App() {
         gap: '1rem',
         flexShrink: 0
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold', background: 'linear-gradient(to right, #667eea, #764ba2)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            n1n.ai
-          </h1>
-        </div>
 
         <div 
           onClick={() => setIsModelSelectorOpen(true)}

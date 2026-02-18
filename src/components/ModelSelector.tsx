@@ -35,6 +35,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
+  const formatPricePer1M = (value: number | string | undefined) => {
+    if (value === undefined || value === null) return '—';
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) return '—';
+    if (n < 0) return 'перем.';
+    const per1M = n * 1_000_000;
+    return per1M.toFixed(4).replace(/\.?0+$/, '');
+  };
+
   const fetchModels = useCallback(async () => {
     setIsLoading(true);
     setError('');
@@ -51,7 +60,41 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       const response = await axios.get(endpoint, { headers });
       const data = response.data.data || response.data;
       if (Array.isArray(data)) {
-        setModels(data.slice(0, 50));
+        if (provider === 'openrouter') {
+          const popularSet = new Set(OPENROUTER_POPULAR_MODELS);
+          const pricingById = new Map<string, Model['pricing']>();
+          for (const item of data) {
+            const id = typeof item?.id === 'string' ? item.id : '';
+            if (!id || !popularSet.has(id)) continue;
+            pricingById.set(id, item?.pricing);
+          }
+          setModels(
+            OPENROUTER_POPULAR_MODELS.map((id) => ({
+              id,
+              object: 'model',
+              created: 0,
+              owned_by: 'openrouter',
+              pricing: pricingById.get(id),
+            }))
+          );
+        } else {
+          const popularSet = new Set(POPULAR_MODELS);
+          const pricingById = new Map<string, Model['pricing']>();
+          for (const item of data) {
+            const id = typeof item?.id === 'string' ? item.id : '';
+            if (!id || !popularSet.has(id)) continue;
+            pricingById.set(id, item?.pricing);
+          }
+          setModels(
+            POPULAR_MODELS.map((id) => ({
+              id,
+              object: 'model',
+              created: 0,
+              owned_by: 'n1n',
+              pricing: pricingById.get(id),
+            }))
+          );
+        }
       } else {
         setError('Неверный формат ответа API');
       }
@@ -70,12 +113,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
     if (provider === 'openrouter') {
       setModels(OPENROUTER_POPULAR_MODELS.map((id) => ({ id, object: 'model', created: 0, owned_by: 'openrouter' })));
-      setIsLoading(false);
+      if (apiKey) void fetchModels();
       return;
     }
 
-    if (models.length === 0) void fetchModels();
-  }, [fetchModels, isOpen, models.length, provider]);
+    setModels(POPULAR_MODELS.map((id) => ({ id, object: 'model', created: 0, owned_by: 'n1n' })));
+    setIsLoading(false);
+    if (apiKey) void fetchModels();
+  }, [apiKey, fetchModels, isOpen, provider]);
 
   useEffect(() => {
     setModels([]);
@@ -129,7 +174,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
-          {isLoading ? (
+          {isLoading && models.length === 0 ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
               <Loader2 className="spin" size={32} color="var(--primary)" />
             </div>
@@ -147,10 +192,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       <button
                         key={model.id}
                         className={`btn ${currentModel === model.id ? 'btn-primary' : ''}`}
-                        style={{ justifyContent: 'center', fontSize: '0.85rem' }}
+                        style={{ justifyContent: 'center', fontSize: '0.85rem', flexDirection: 'column', alignItems: 'center', gap: '0.15rem' }}
                         onClick={() => onSelectModel(model.id)}
                       >
-                        {model.id}
+                        <div>{model.id}</div>
+                        <div style={{ fontSize: '0.72rem', color: '#a0a0a0' }}>
+                          Вх ${formatPricePer1M(model.pricing?.prompt)} · Вых ${formatPricePer1M(model.pricing?.completion)}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -169,10 +217,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           justifyContent: 'flex-start',
                           background: currentModel === model.id ? 'rgba(102, 126, 234, 0.2)' : 'transparent',
                           borderColor: currentModel === model.id ? 'var(--primary)' : 'transparent',
+                          flexDirection: 'column',
+                          alignItems: 'flex-start',
+                          gap: '0.15rem',
                         }}
                         onClick={() => onSelectModel(model.id)}
                       >
-                        {model.id}
+                        <div>{model.id}</div>
+                        <div style={{ fontSize: '0.72rem', color: '#a0a0a0' }}>
+                          Вх ${formatPricePer1M(model.pricing?.prompt)} · Вых ${formatPricePer1M(model.pricing?.completion)}
+                        </div>
                       </button>
                     ))}
                   </div>
